@@ -3,6 +3,16 @@
 # by the following command:
 #
 #    pip-compile requirements.in
+# FILEPATH: /C:/Users/azureuser/source/repos/azure-search-openai-demo/app/backend/requirements.txt
+
+"""
+This file contains the list of required packages and their versions for the backend of the Azure Search OpenAI Demo application.
+"""
+
+# List of requirements
+
+# This file contains a list of Python packages required for the backend of the Azure Search OpenAI demo application.
+
 #
 aiofiles==23.2.1
     # via quart

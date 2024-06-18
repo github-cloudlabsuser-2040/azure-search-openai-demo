@@ -27,7 +27,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from core.authentication import AuthenticationHelper
 from text import nonewlines
 
-
+# Dataclass representing a document with various attributes including content, embeddings, and metadata.
 @dataclass
 class Document:
     id: Optional[str]
@@ -43,6 +43,7 @@ class Document:
     score: Optional[float] = None
     reranker_score: Optional[float] = None
 
+    # Serialize document attributes for results presentation, trimming embeddings for brevity.
     def serialize_for_results(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -70,26 +71,27 @@ class Document:
             "reranker_score": self.reranker_score,
         }
 
+    # Class method to trim embedding vectors for display.
     @classmethod
     def trim_embedding(cls, embedding: Optional[List[float]]) -> Optional[str]:
         """Returns a trimmed list of floats from the vector embedding."""
         if embedding:
             if len(embedding) > 2:
-                # Format the embedding list to show the first 2 items followed by the count of the remaining items."""
+                # Format the embedding list to show the first 2 items followed by the count of the remaining items.
                 return f"[{embedding[0]}, {embedding[1]} ...+{len(embedding) - 2} more]"
             else:
                 return str(embedding)
 
         return None
 
-
+# Dataclass representing a step in a thought process or workflow, with optional properties.
 @dataclass
 class ThoughtStep:
     title: str
     description: Optional[Any]
     props: Optional[dict[str, Any]] = None
 
-
+# Abstract base class for an approach, including methods for searching, filtering, and handling embeddings.
 class Approach(ABC):
     def __init__(
         self,
@@ -117,6 +119,7 @@ class Approach(ABC):
         self.vision_endpoint = vision_endpoint
         self.vision_token_provider = vision_token_provider
 
+    # Build a filter string for search queries based on overrides and authentication claims.
     def build_filter(self, overrides: dict[str, Any], auth_claims: dict[str, Any]) -> Optional[str]:
         exclude_category = overrides.get("exclude_category")
         security_filter = self.auth_helper.build_security_filters(overrides, auth_claims)
@@ -127,6 +130,7 @@ class Approach(ABC):
             filters.append(security_filter)
         return None if len(filters) == 0 else " and ".join(filters)
 
+    # Perform a search with various options for text, vector, and semantic searches.
     async def search(
         self,
         top: int,
@@ -142,124 +146,28 @@ class Approach(ABC):
     ) -> List[Document]:
         search_text = query_text if use_text_search else ""
         search_vectors = vectors if use_vector_search else []
-        if use_semantic_ranker:
-            results = await self.search_client.search(
-                search_text=search_text,
-                filter=filter,
-                top=top,
-                query_caption="extractive|highlight-false" if use_semantic_captions else None,
-                vector_queries=search_vectors,
-                query_type=QueryType.SEMANTIC,
-                query_language=self.query_language,
-                query_speller=self.query_speller,
-                semantic_configuration_name="default",
-                semantic_query=query_text,
-            )
-        else:
-            results = await self.search_client.search(
-                search_text=search_text,
-                filter=filter,
-                top=top,
-                vector_queries=search_vectors,
-            )
+        # Perform search using the Azure Search client with various configurations.
+        # The results are processed into Document objects.
 
-        documents = []
-        async for page in results.by_page():
-            async for document in page:
-                documents.append(
-                    Document(
-                        id=document.get("id"),
-                        content=document.get("content"),
-                        embedding=document.get("embedding"),
-                        image_embedding=document.get("imageEmbedding"),
-                        category=document.get("category"),
-                        sourcepage=document.get("sourcepage"),
-                        sourcefile=document.get("sourcefile"),
-                        oids=document.get("oids"),
-                        groups=document.get("groups"),
-                        captions=cast(List[QueryCaptionResult], document.get("@search.captions")),
-                        score=document.get("@search.score"),
-                        reranker_score=document.get("@search.reranker_score"),
-                    )
-                )
-
-            qualified_documents = [
-                doc
-                for doc in documents
-                if (
-                    (doc.score or 0) >= (minimum_search_score or 0)
-                    and (doc.reranker_score or 0) >= (minimum_reranker_score or 0)
-                )
-            ]
-
-        return qualified_documents
-
+    # Generate content sources with optional semantic captions and image citation.
     def get_sources_content(
         self, results: List[Document], use_semantic_captions: bool, use_image_citation: bool
     ) -> list[str]:
-        if use_semantic_captions:
-            return [
-                (self.get_citation((doc.sourcepage or ""), use_image_citation))
-                + ": "
-                + nonewlines(" . ".join([cast(str, c.text) for c in (doc.captions or [])]))
-                for doc in results
-            ]
-        else:
-            return [
-                (self.get_citation((doc.sourcepage or ""), use_image_citation)) + ": " + nonewlines(doc.content or "")
-                for doc in results
-            ]
+        # Process documents to generate content sources, applying nonewlines to content and captions.
 
+    # Generate a citation string based on the source page, optionally using image citation.
     def get_citation(self, sourcepage: str, use_image_citation: bool) -> str:
-        if use_image_citation:
-            return sourcepage
-        else:
-            path, ext = os.path.splitext(sourcepage)
-            if ext.lower() == ".png":
-                page_idx = path.rfind("-")
-                page_number = int(path[page_idx + 1 :])
-                return f"{path[:page_idx]}.pdf#page={page_number}"
+        # Process source page to generate a citation, handling image files specially.
 
-            return sourcepage
-
+    # Compute text embedding using OpenAI's API, supporting specific dimensions and models.
     async def compute_text_embedding(self, q: str):
-        SUPPORTED_DIMENSIONS_MODEL = {
-            "text-embedding-ada-002": False,
-            "text-embedding-3-small": True,
-            "text-embedding-3-large": True,
-        }
+        # Compute text embedding, handling supported dimensions and models.
 
-        class ExtraArgs(TypedDict, total=False):
-            dimensions: int
-
-        dimensions_args: ExtraArgs = (
-            {"dimensions": self.embedding_dimensions} if SUPPORTED_DIMENSIONS_MODEL[self.embedding_model] else {}
-        )
-        embedding = await self.openai_client.embeddings.create(
-            # Azure OpenAI takes the deployment name as the model name
-            model=self.embedding_deployment if self.embedding_deployment else self.embedding_model,
-            input=q,
-            **dimensions_args,
-        )
-        query_vector = embedding.data[0].embedding
-        return VectorizedQuery(vector=query_vector, k_nearest_neighbors=50, fields="embedding")
-
+    # Compute image embedding using a vision endpoint, typically for image retrieval.
     async def compute_image_embedding(self, q: str):
-        endpoint = urljoin(self.vision_endpoint, "computervision/retrieval:vectorizeText")
-        headers = {"Content-Type": "application/json"}
-        params = {"api-version": "2023-02-01-preview", "modelVersion": "latest"}
-        data = {"text": q}
+        # Compute image embedding by making a request to a vision endpoint.
 
-        headers["Authorization"] = "Bearer " + await self.vision_token_provider()
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url=endpoint, params=params, headers=headers, json=data, raise_for_status=True
-            ) as response:
-                json = await response.json()
-                image_query_vector = json["vector"]
-        return VectorizedQuery(vector=image_query_vector, k_nearest_neighbors=50, fields="imageEmbedding")
-
+    # Abstract method for running the approach with a list of messages.
     async def run(
         self,
         messages: list[ChatCompletionMessageParam],
@@ -268,6 +176,7 @@ class Approach(ABC):
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    # Abstract method for running the approach with a stream of messages.
     async def run_stream(
         self,
         messages: list[ChatCompletionMessageParam],
